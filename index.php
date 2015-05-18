@@ -71,17 +71,28 @@ function sort_by_date($a, $b)
 	return 0;
 }
 
-function print_changes($current, $next, $chan)
+function gather_revisions($current, $next, $chan)
 {
 	global $DB;
 	$revs = array();
-	if (!($res = $DB->query(kl_str_sql("select revisions from changes where chan=!s and build<=!i and build>!i order by build desc", $chan, $current->nr, $next->nr)))) {
-		return;
-	} else {
-		while ($row = $DB->fetchRow($res)) {
-			$revs = array_merge($revs, explode(",", $row["revisions"]));
-		}
+	if($next)
+	{
+		if (!($res = $DB->query(kl_str_sql("select revisions from changes where chan=!s and build<=!i and build>!i order by build desc", $chan, $current->nr, $next->nr))))
+			return;
 	}
+	else if (!($res = $DB->query(kl_str_sql("select revisions from changes where chan=!s and build=!i order by build desc", $chan, $current->nr))))
+		return;
+	
+	while ($row = $DB->fetchRow($res))
+	{
+		$revs = array_merge($revs, explode(",", $row["revisions"]));
+	}
+	return $revs;
+}
+
+function print_changes($chan, &$revs)
+{
+	global $DB;
 
 	if ($res = $DB->query(kl_str_sql("select * from revs where chan=!s and hash in ('" . implode("','", $revs) . "')", $chan))) {
 
@@ -115,7 +126,17 @@ Function print_build($current, $next, $buildNr, $chan)
 	$vspace = "";
 	$github = "https://github.com/singularity-viewer/SingularityViewer/";
 
-	if ($next) {
+	$revs = gather_revisions($current, $next, $chan);	
+	$next_hash;
+	if($next)
+		$next_hash = $next->hash;
+	else
+	{
+		$next_hash = end($revs);
+		reset($revs);
+	}
+	
+	{
 		if (($current->linux_file && $current->osx_file && $current->linux64_file)) {
 			$vspace = "<br/><br/>";
 		}
@@ -130,8 +151,8 @@ Function print_build($current, $next, $buildNr, $chan)
 
  	print "</th><th>" . htmlspecialchars($current->modified). " (" . Layout::since(strtotime($current->modified)) . " ago)<br/>";
 
-	if ($next) {
-		$gh_link = $github . "compare/" . substr($next->hash, 0, 12) . "..." . substr($current->hash, 0, 12);
+	if ($next_hash != $current->hash) {
+		$gh_link = $github . "compare/" . substr($next_hash, 0, 12) . "..." . substr($current->hash, 0, 12);
 	} else {
 		$gh_link = $github . "commits/" . $current->hash;
 	}
@@ -144,8 +165,18 @@ Function print_build($current, $next, $buildNr, $chan)
 		  <th>";
 
 	if ($current->file) {
-		print "<a href='" . download_link($current->file) . "' " . TARGET . "><img src=\"" . IMG_ROOT . "/dl.gif\" alt=\"Download Windows Build\"/>&nbsp;Windows</a>&nbsp;&nbsp;
-              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a class='dimmer' href='" . download_link($current->file . ".log") . "' " . TARGET . ">Build Log</a>";
+		print "<a href='" . download_link($current->file) . "' " . TARGET . "><img src=\"" . IMG_ROOT . "/dl.gif\" alt=\"Download Windows Build\"/>&nbsp;Windows</a>";
+		if (download_exists($current->file . ".log")) {
+			print "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a class='dimmer' href='" . download_link($current->file . ".log") . "' " . TARGET . ">Build Log</a>";
+		}
+	}
+
+
+	if ($current->win64_file) {
+		print "<br/><a href='" . download_link($current->win64_file) . "' " . TARGET . "><img src=\"" . IMG_ROOT . "/dl.gif\" alt=\"Download Windows Build\"/>&nbsp;Windows (64 bit)</a>";
+		if (download_exists($current->win64_file . ".log")) {
+              print "&thinsp;<a class='dimmer' href='" . download_link($current->win64_file . ".log") . "' " . TARGET . ">Build Log</a>";
+		}
 	}
 
 	if ($current->linux_file) {
@@ -167,15 +198,15 @@ Function print_build($current, $next, $buildNr, $chan)
 	if ($current->osx_file) {
 		print "<br/><a href='" . download_link($current->osx_file) . "' " . TARGET . "><img src=\"" . IMG_ROOT . "/dl.gif\" alt=\"Download Mac OS X Build\"/>&nbsp;Mac OS X</a>";
 		if (download_exists($current->osx_file . ".log")) {
-			print "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a class='dimmer' href='" . download_link($current->osx_file . ".log") . "' " . TARGET . ">Build Log</a>";
+			print "&thinsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a class='dimmer' href='" . download_link($current->osx_file . ".log") . "' " . TARGET . ">Build Log</a>";
 		}
 	}
 
 	print "</th></tr>";
 
-	if ($next) {
+	{
 		print '<tr' . ($buildNr ? '' : ' style="display: none;"') . ' id="changes_' . $current->nr . '"><td colspan="4">';
-		print_changes($current, $next, $chan);
+		print_changes($chan, $revs);
 		print "</td></tr>";
 	}
 
@@ -231,6 +262,9 @@ if ($res = $DB->query(kl_str_sql("select * from builds_all where chan=!s $where 
 
 		$file = "{$chan}_" . str_replace(".", "-", $build->version) . "_Setup.exe";
 		$build->file = download_exists($file) ? $file : false;
+
+		$win64_file = "{$chan}_" . str_replace(".", "-", $build->version) . "_x86-64_Setup.exe";
+		$build->win64_file = download_exists($win64_file) ? $win64_file : false;
 
 		$linux_file = "{$chan}-i686-{$build->version}.tar.bz2";
 		$build->linux_file = download_exists($linux_file) ? $linux_file : false;
